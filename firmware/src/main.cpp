@@ -1,17 +1,20 @@
 #include <M5Cardputer.h>
+#include <cmath>
 #include "clawd_sprites.h"
 
 // ── walk config ──
 
-static constexpr int WALK_RANGE  = 25;
-static constexpr int STEP_PX     = 2;
-static constexpr int STEP_MS     = 150;
-static constexpr int BOB_PX      = 2;
+static constexpr int WALK_RANGE = 25;
+static constexpr int STEP_PX   = 2;
+static constexpr int STEP_MS   = 150;
+static constexpr int BOB_PX    = 2;
+static constexpr int BREATH_AMP = 1;
 
 // ── sprite buffer ──
 
 static constexpr int SPRITE_W = clawd::TOTAL_W + WALK_RANGE * 2 + 2;
-static constexpr int SPRITE_H = clawd::TOTAL_H + BOB_PX + 2;
+static constexpr int SPRITE_H =
+    clawd::TOTAL_H + (BOB_PX + BREATH_AMP) * 2 + 2;
 static constexpr int SPRITE_X = (240 - SPRITE_W) / 2;
 static constexpr int SPRITE_Y = (135 - SPRITE_H) / 2 - 6;
 
@@ -21,14 +24,49 @@ static M5Canvas canvas(&M5Cardputer.Display);
 
 static clawd::Expression currentExpr = clawd::EXPR_IDLE;
 
-static int  walkX        = 0;
-static int  walkDir      = 1;
-static int  walkStep     = 0;
-static bool walkActive   = true;
+static int  walkX      = 0;
+static int  walkDir    = 1;
+static int  walkStep   = 0;
+static bool walkActive = true;
+
 static unsigned long nextStepMs    = 0;
 static unsigned long nextBlinkMs   = 3000;
 static unsigned long reactionEndMs = 0;
 static bool          inReaction    = false;
+
+// ── sound state ──
+
+static bool muted       = false;
+static int  volumeLevel = 1;
+static const uint8_t VOLUME_TABLE[] = {32, 64, 128};
+
+static constexpr unsigned long DEBOUNCE_MS = 200;
+static unsigned long lastKeyMs = 0;
+
+// ── party mode ──
+
+static bool partyActive              = false;
+static unsigned long partyEndMs      = 0;
+static int  partyNotePos             = 0;
+static unsigned long partyNextNoteMs = 0;
+
+static const uint16_t PARTY_COLORS[] = {
+    0xF800, 0xFD20, 0xFFE0, 0x07E0, 0x001F, 0x780F, 0xF81F, 0x07FF,
+};
+static constexpr int NUM_PARTY_COLORS = 8;
+
+static const int16_t PARTY_MELODY[] = {
+    330,  392,  440,  523,    // buildup low
+    523,  659,  784,  880,    // buildup high
+    262,  0,    1047, 0,      // drop 1
+    262,  0,    1319, 0,
+    523,  659,  784,  1047,   // groove
+    880,  784,  659,  523,
+    262,  0,    1568, 0,      // drop 2
+    262,  0,    1047, 1319,
+};
+static constexpr int PARTY_MELODY_LEN = 32;
+static constexpr unsigned long PARTY_DURATION_MS = 10000;
 
 // ── drawing ──
 
@@ -37,7 +75,7 @@ static void drawClawdToCanvas(clawd::Expression expr,
   canvas.fillSprite(TFT_BLACK);
 
   const int ox = WALK_RANGE + 1 + offsetX;
-  const int oy = BOB_PX + 1 + offsetY;
+  const int oy = BOB_PX + BREATH_AMP + 1 + offsetY;
 
   const auto *shape = clawd::shapeFor(expr);
 
@@ -54,15 +92,20 @@ static void drawClawdToCanvas(clawd::Expression expr,
 }
 
 static void showStatus(clawd::Expression expr) {
-  const char* labels[] = {
+  static const char *labels[] = {
       "idle", "blink", "happy", "surprised", "sleepy", "excited"};
   int ty = 135 - 14;
   M5Cardputer.Display.fillRect(0, ty, 240, 14, TFT_BLACK);
   M5Cardputer.Display.setTextSize(1);
   M5Cardputer.Display.setTextColor(0x7BEF);
   M5Cardputer.Display.setCursor(4, ty + 3);
-  M5Cardputer.Display.printf("%s  heap:%u", labels[expr],
-                             ESP.getFreeHeap());
+  if (muted) {
+    M5Cardputer.Display.printf("%s  MUTE  heap:%u",
+                               labels[expr], ESP.getFreeHeap());
+  } else {
+    M5Cardputer.Display.printf("%s  vol:%d  heap:%u",
+                               labels[expr], volumeLevel, ESP.getFreeHeap());
+  }
 }
 
 // ── animation ──
@@ -70,14 +113,15 @@ static void showStatus(clawd::Expression expr) {
 static void animTick(unsigned long now) {
   if (walkActive && now >= nextStepMs) {
     walkX += walkDir * STEP_PX;
-    if (walkX >= WALK_RANGE || walkX <= -WALK_RANGE) {
-      walkDir = -walkDir;
-    }
+    if (walkX >= WALK_RANGE || walkX <= -WALK_RANGE) walkDir = -walkDir;
     walkStep++;
     nextStepMs = now + STEP_MS;
   }
 
   int bobY = (walkActive && (walkStep & 1)) ? -BOB_PX : 0;
+
+  float breathPhase = (float)(now % 3000) / 3000.0f * 6.2831853f;
+  int breathY = (int)(sinf(breathPhase) * (float)BREATH_AMP);
 
   if (!inReaction && currentExpr == clawd::EXPR_IDLE) {
     if (now > nextBlinkMs) {
@@ -94,36 +138,204 @@ static void animTick(unsigned long now) {
     walkActive = true;
   }
 
-  drawClawdToCanvas(currentExpr, walkX, bobY);
+  drawClawdToCanvas(currentExpr, walkX, bobY + breathY);
 }
 
-// ── key handling ──
+// ── party mode ──
 
-static void triggerExpression(clawd::Expression expr, unsigned long durationMs,
-                              int toneHz) {
+static void startParty() {
+  partyActive = true;
+  partyEndMs = millis() + PARTY_DURATION_MS;
+  partyNotePos = 0;
+  partyNextNoteMs = 0;
+  inReaction = false;
+  walkActive = false;
+  Serial.println("[clawd] party mode!");
+}
+
+static void partyTick(unsigned long now) {
+  if (now > partyEndMs) {
+    partyActive = false;
+    currentExpr = clawd::EXPR_IDLE;
+    inReaction = false;
+    walkActive = true;
+    walkX = 0;
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+    showStatus(clawd::EXPR_IDLE);
+    return;
+  }
+
+  int bgIdx = (int)(now / 150) % NUM_PARTY_COLORS;
+  uint16_t bgColor   = PARTY_COLORS[bgIdx];
+  uint16_t charColor = PARTY_COLORS[(bgIdx + 3) % NUM_PARTY_COLORS];
+
+  M5Cardputer.Display.fillScreen(bgColor);
+
+  float phaseX = (float)(now % 400) / 400.0f * 6.2831853f;
+  float phaseY = (float)(now % 250) / 250.0f * 6.2831853f;
+  int wildX = (int)(sinf(phaseX) * 30.0f);
+  int wildY = (int)(fabsf(sinf(phaseY)) * -12.0f);
+
+  static const clawd::Expression PARTY_EXPRS[] = {
+      clawd::EXPR_HAPPY, clawd::EXPR_EXCITED,
+      clawd::EXPR_SURPRISED, clawd::EXPR_EXCITED,
+  };
+  clawd::Expression partyExpr = PARTY_EXPRS[(now / 200) % 4];
+
+  canvas.fillSprite(bgColor);
+
+  for (int i = 0; i < 20; i++) {
+    canvas.fillRect(esp_random() % SPRITE_W, esp_random() % SPRITE_H,
+                    3, 3, TFT_WHITE);
+  }
+
+  const int ox = WALK_RANGE + 1 + wildX;
+  const int oy = BOB_PX + BREATH_AMP + 1 + wildY;
+  const auto *shape = clawd::shapeFor(partyExpr);
+  for (int r = 0; r < clawd::GRID_ROWS; r++) {
+    for (int c = 0; c < clawd::GRID_COLS; c++) {
+      if (shape[r][c]) {
+        canvas.fillRect(ox + c * clawd::QW, oy + r * clawd::QH,
+                        clawd::QW, clawd::QH, charColor);
+      }
+    }
+  }
+
+  canvas.pushSprite(SPRITE_X, SPRITE_Y);
+
+  int remaining = (int)((partyEndMs - now) / 1000) + 1;
+  M5Cardputer.Display.setTextSize(2);
+  M5Cardputer.Display.setTextColor(TFT_WHITE);
+  M5Cardputer.Display.setCursor(70, 135 - 22);
+  M5Cardputer.Display.printf("PARTY! %d", remaining);
+
+  if (!muted && now >= partyNextNoteMs) {
+    int freq = PARTY_MELODY[partyNotePos % PARTY_MELODY_LEN];
+    if (freq > 0) {
+      M5Cardputer.Speaker.tone(freq, 100);
+    }
+    partyNotePos++;
+    partyNextNoteMs = now + 120;
+  }
+}
+
+// ── reactions ──
+
+static void triggerExpression(clawd::Expression expr,
+                              unsigned long durationMs, int toneHz,
+                              bool stopWalk = true) {
   currentExpr = expr;
   reactionEndMs = millis() + durationMs;
   inReaction = true;
-  walkActive = false;
+  if (stopWalk) walkActive = false;
 
-  if (toneHz > 0) {
+  if (toneHz > 0 && !muted) {
     M5Cardputer.Speaker.tone(toneHz, 80);
   }
   showStatus(expr);
 }
 
-static int keyPressCount = 0;
+// ── serial events ──
+
+struct EventDef {
+  const char *name;
+  clawd::Expression expr;
+  int toneHz;
+  unsigned long durationMs;
+  bool stopWalk;
+};
+
+static const EventDef EVENT_TABLE[] = {
+    {"bash",   clawd::EXPR_BLINK,     0,    300,  false},
+    {"edit",   clawd::EXPR_BLINK,     0,    300,  false},
+    {"read",   clawd::EXPR_BLINK,     0,    200,  false},
+    {"glob",   clawd::EXPR_BLINK,     0,    200,  false},
+    {"grep",   clawd::EXPR_BLINK,     0,    200,  false},
+    {"write",  clawd::EXPR_HAPPY,     800,  600,  true},
+    {"test",   clawd::EXPR_SURPRISED, 600,  600,  true},
+    {"search", clawd::EXPR_HAPPY,     700,  500,  true},
+    {"commit", clawd::EXPR_EXCITED,   1200, 1500, true},
+    {"push",   clawd::EXPR_EXCITED,   1500, 2000, true},
+};
+
+static unsigned long lastEventMs = 0;
+static char serialBuf[32];
+static int  serialPos = 0;
+
+static void handleSerialEvent(const char *event) {
+  unsigned long now = millis();
+  if (now - lastEventMs < DEBOUNCE_MS) return;
+  lastEventMs = now;
+
+  if (strcmp(event, "party") == 0) {
+    startParty();
+    return;
+  }
+
+  for (const auto &e : EVENT_TABLE) {
+    if (strcmp(event, e.name) == 0) {
+      triggerExpression(e.expr, e.durationMs, e.toneHz, e.stopWalk);
+      Serial.printf("[clawd] event: %s\n", event);
+      return;
+    }
+  }
+  triggerExpression(clawd::EXPR_BLINK, 200, 0, false);
+  Serial.printf("[clawd] event: %s (unknown)\n", event);
+}
+
+// ── key handling ──
 
 static void handleKey() {
-  keyPressCount++;
-  int idx = keyPressCount % (clawd::EXPR_COUNT - 1);
-  clawd::Expression exprs[] = {
-      clawd::EXPR_HAPPY,     clawd::EXPR_SURPRISED,
-      clawd::EXPR_SLEEPY,    clawd::EXPR_EXCITED,
-      clawd::EXPR_IDLE,
+  unsigned long now = millis();
+  if (now - lastKeyMs < DEBOUNCE_MS) return;
+  lastKeyMs = now;
+
+  auto &state = M5Cardputer.Keyboard.keysState();
+
+  if (state.enter) {
+    triggerExpression(clawd::EXPR_EXCITED, 1500, 800);
+    if (!muted) {
+      delay(90);
+      M5Cardputer.Speaker.tone(1200, 80);
+    }
+    Serial.println("[clawd] pet!");
+    return;
+  }
+
+  if (!state.word.empty()) {
+    char c = state.word[0];
+
+    if (c == 'p' || c == 'P') {
+      startParty();
+      return;
+    }
+
+    if (c == 'm' || c == 'M') {
+      muted = !muted;
+      if (!muted) M5Cardputer.Speaker.tone(1000, 30);
+      showStatus(currentExpr);
+      Serial.printf("[clawd] mute=%d\n", muted);
+      return;
+    }
+
+    if (c >= '1' && c <= '3') {
+      volumeLevel = c - '0';
+      M5Cardputer.Speaker.setVolume(VOLUME_TABLE[volumeLevel - 1]);
+      if (!muted) M5Cardputer.Speaker.tone(800 + volumeLevel * 200, 40);
+      showStatus(currentExpr);
+      Serial.printf("[clawd] vol=%d\n", volumeLevel);
+      return;
+    }
+  }
+
+  static const clawd::Expression REACT_EXPRS[] = {
+      clawd::EXPR_HAPPY, clawd::EXPR_SURPRISED,
+      clawd::EXPR_SLEEPY, clawd::EXPR_EXCITED,
   };
-  int tones[] = {1200, 800, 500, 1500, 1000};
-  triggerExpression(exprs[idx], 1200, tones[idx]);
+  static const int REACT_TONES[] = {1000, 800, 500, 1200};
+  int idx = esp_random() % 4;
+  triggerExpression(REACT_EXPRS[idx], 800, REACT_TONES[idx]);
+  Serial.printf("[clawd] key → expr=%d\n", currentExpr);
 }
 
 // ── setup / loop ──
@@ -139,15 +351,14 @@ void setup() {
   canvas.setColorDepth(16);
   canvas.createSprite(SPRITE_W, SPRITE_H);
 
-  showStatus(clawd::EXPR_IDLE);
-
-  M5Cardputer.Speaker.setVolume(64);
+  M5Cardputer.Speaker.setVolume(VOLUME_TABLE[0]);
   M5Cardputer.Speaker.tone(880, 100);
   delay(120);
   M5Cardputer.Speaker.tone(1100, 80);
 
-  Serial.printf("[clawd] char %dx%d, sprite %dx%d (%dB), heap: %u\n",
-                clawd::TOTAL_W, clawd::TOTAL_H,
+  showStatus(clawd::EXPR_IDLE);
+
+  Serial.printf("[clawd] sprite %dx%d (%dB), heap: %u\n",
                 SPRITE_W, SPRITE_H, SPRITE_W * SPRITE_H * 2,
                 ESP.getFreeHeap());
 }
@@ -155,11 +366,28 @@ void setup() {
 void loop() {
   M5Cardputer.update();
 
-  if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
-    handleKey();
-    Serial.printf("[clawd] key → expr=%d\n", currentExpr);
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialPos > 0) {
+        serialBuf[serialPos] = '\0';
+        handleSerialEvent(serialBuf);
+        serialPos = 0;
+      }
+    } else if (serialPos < (int)sizeof(serialBuf) - 1) {
+      serialBuf[serialPos++] = c;
+    }
   }
 
-  animTick(millis());
+  if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+    handleKey();
+  }
+
+  unsigned long now = millis();
+  if (partyActive) {
+    partyTick(now);
+  } else {
+    animTick(now);
+  }
   delay(16);
 }

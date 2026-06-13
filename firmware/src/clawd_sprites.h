@@ -12,8 +12,8 @@ constexpr int GRID_COLS = 16;
 constexpr int GRID_ROWS = 10;
 constexpr int QW = 6;
 constexpr int QH = 7;
-constexpr int TOTAL_W = GRID_COLS * QW;  // 128
-constexpr int TOTAL_H = GRID_ROWS * QH;  // 90
+constexpr int TOTAL_W = GRID_COLS * QW;  // 96
+constexpr int TOTAL_H = GRID_ROWS * QH;  // 70
 
 // IDLE shape — row-major, 1=filled 0=empty
 constexpr uint8_t SHAPE_IDLE[GRID_ROWS][GRID_COLS] = {
