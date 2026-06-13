@@ -1,0 +1,19 @@
+.env
+.env.*
+*.pem
+*.key
+
+# PlatformIO build artifacts
+.pio/
+
+# Reference screenshots (not for redistribution)
+firmware/assets/source/*.png
+firmware/assets/source/*.jpg
+firmware/assets/source/*.bmp
+
+# OS
+.DS_Store
+
+# Claude Code personal
+CLAUDE.local.md
+.mcp.json
