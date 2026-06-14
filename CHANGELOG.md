@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0] — 2026-06-14
+
+**Summary**: Canvas shrink, mini-Clawd polish, lifecycle event sprites.
+
+### Added
+- Unique sprites for lifecycle events: DISAPPOINTED (tool_fail), PANICKING (stop_fail), CONFUSED (perm_ask) with "???" overlay
+- Lifecycle hook reactions: PostToolUseFailure, Stop, StopFailure, PermissionRequest (#1, #2, #4)
+- `install-hook.sh` now manages all 7 hook event types atomically
+- Sleep clears mini Clawds from display
+
+### Changed
+- Parent canvas shrunk from 148px to 98px with position-based walking and strip-clearing
+- Mini walk: random flip before move + hard clamp to prevent canvas overflow
+- Mini colors changed to deep rust (#BE3C14), both minis use the same color
+- Minis linger until 8-second timeout instead of despawning immediately on subagent_stop
+- Mini animation tuned: 80ms steps, 1px stride, 3px bounce for subtler movement
+
 ## [0.3.0] — 2026-06-13
 
 **Summary**: Mini-Clawds spawn as subagent companions.
