@@ -12,11 +12,12 @@ static constexpr int BREATH_AMP = 1;
 
 // ── sprite buffer ──
 
-static constexpr int SPRITE_W = clawd::TOTAL_W + WALK_RANGE * 2 + 2;
+static constexpr int SPRITE_W = clawd::TOTAL_W + 2;
 static constexpr int SPRITE_H =
     clawd::TOTAL_H + (BOB_PX + BREATH_AMP) * 2 + 2;
-static constexpr int SPRITE_X = (240 - SPRITE_W) / 2;
+static constexpr int SPRITE_BASE_X = (240 - SPRITE_W) / 2;
 static constexpr int SPRITE_Y = (135 - SPRITE_H) / 2 - 6;
+static int prevCanvasX = SPRITE_BASE_X;
 
 static M5Canvas canvas(&M5Cardputer.Display);
 
@@ -63,17 +64,17 @@ static constexpr int MINI_QH = 3;
 static constexpr int MINI_W = clawd::GRID_COLS * MINI_QW;  // 32
 static constexpr int MINI_H = clawd::GRID_ROWS * MINI_QH;  // 30
 
-static constexpr int MINI_WALK_RANGE = 10;
-static constexpr int MINI_STEP_PX   = 3;
-static constexpr int MINI_STEP_MS   = 50;
-static constexpr int MINI_BOB_PX    = 6;
+static constexpr int MINI_WALK_RANGE = 2;
+static constexpr int MINI_STEP_PX   = 1;
+static constexpr int MINI_STEP_MS   = 80;
+static constexpr int MINI_BOB_PX    = 3;
 
 static const uint16_t MINI_COLORS[MAX_MINIS] = {
-    ((90 >> 3) << 11) | ((140 >> 2) << 5) | (220 >> 3),   // blue
-    ((90 >> 3) << 11) | ((210 >> 2) << 5) | (140 >> 3),   // green
+    ((190 >> 3) << 11) | ((60 >> 2) << 5) | (20 >> 3),  // deep rust #BE3C14
+    ((190 >> 3) << 11) | ((60 >> 2) << 5) | (20 >> 3),  // same
 };
 
-static const int MINI_CANVAS_X[MAX_MINIS] = {0, 200};
+static const int MINI_CANVAS_X[MAX_MINIS] = {2, 198};
 static constexpr int MINI_CANVAS_W = 40;
 static constexpr int MINI_CANVAS_H = MINI_H + MINI_BOB_PX * 2 + 6;  // 48
 static constexpr int MINI_HOME_OFFSET_X = 4;
@@ -95,7 +96,7 @@ struct MiniState {
 static int miniCount = 0;
 static MiniState minis[MAX_MINIS] = {};
 static unsigned long lastMiniEventMs = 0;
-static constexpr unsigned long MINI_TIMEOUT_MS = 5UL * 60 * 1000;
+static constexpr unsigned long MINI_TIMEOUT_MS = 8UL * 1000;
 
 // perm_ask "???" overlay (non-blocking, expression unchanged)
 static unsigned long permAskEndMs = 0;
@@ -144,7 +145,7 @@ static void drawClawdToCanvas(clawd::Expression expr,
                               int offsetX, int offsetY) {
   canvas.fillSprite(TFT_BLACK);
 
-  const int ox = WALK_RANGE + 1 + offsetX;
+  const int ox = 1 + offsetX;
   const int oy = BOB_PX + BREATH_AMP + 1 + offsetY;
 
   const auto *shape = clawd::shapeFor(expr);
@@ -157,8 +158,21 @@ static void drawClawdToCanvas(clawd::Expression expr,
       }
     }
   }
+}
 
-  canvas.pushSprite(SPRITE_X, SPRITE_Y);
+static void pushCanvas(int canvasX) {
+  if (canvasX != prevCanvasX) {
+    if (canvasX > prevCanvasX) {
+      M5Cardputer.Display.fillRect(prevCanvasX, SPRITE_Y,
+                                   canvasX - prevCanvasX, SPRITE_H, TFT_BLACK);
+    } else {
+      M5Cardputer.Display.fillRect(canvasX + SPRITE_W, SPRITE_Y,
+                                   (prevCanvasX + SPRITE_W) - (canvasX + SPRITE_W),
+                                   SPRITE_H, TFT_BLACK);
+    }
+    prevCanvasX = canvasX;
+  }
+  canvas.pushSprite(canvasX, SPRITE_Y);
 }
 
 static void showStatus(clawd::Expression expr) {
@@ -191,6 +205,7 @@ static void triggerExpression(clawd::Expression expr,
 
 static void drawMiniClawds(unsigned long now) {
   if (miniCount <= 0) return;
+  if (sleepState == SLEEP_SLEEPING) return;
 
   if (now - lastMiniEventMs > MINI_TIMEOUT_MS) {
     for (int i = 0; i < MAX_MINIS; i++) {
@@ -205,10 +220,10 @@ static void drawMiniClawds(unsigned long now) {
     MiniState &m = minis[i];
 
     if (now >= m.nextStepMs) {
-      m.walkX += m.walkDir * MINI_STEP_PX;
-      if (m.walkX >= MINI_WALK_RANGE || m.walkX <= -MINI_WALK_RANGE)
-        m.walkDir = -m.walkDir;
       if ((esp_random() % 4) == 0) m.walkDir = -m.walkDir;
+      m.walkX += m.walkDir * MINI_STEP_PX;
+      if (m.walkX > MINI_WALK_RANGE) { m.walkX = MINI_WALK_RANGE; m.walkDir = -1; }
+      else if (m.walkX < -MINI_WALK_RANGE) { m.walkX = -MINI_WALK_RANGE; m.walkDir = 1; }
       m.walkStep++;
       m.nextStepMs = now + MINI_STEP_MS;
     }
@@ -253,12 +268,9 @@ static void spawnMiniClawd() {
 
 static void despawnMiniClawd() {
   if (miniCount <= 0) return;
-  miniCount--;
-  miniCanvas[miniCount].fillSprite(TFT_BLACK);
-  miniCanvas[miniCount].pushSprite(MINI_CANVAS_X[miniCount], MINI_CANVAS_Y);
   lastMiniEventMs = millis();
   if (!muted) M5Cardputer.Speaker.tone(400, 80);
-  Serial.printf("[clawd] mini despawned (%d active)\n", miniCount);
+  Serial.printf("[clawd] mini stop received (%d active, linger until timeout)\n", miniCount);
 }
 
 static void fanfareTick(unsigned long now) {
@@ -284,6 +296,10 @@ static void sleepTransition(unsigned long now) {
   if (sleepState != prev && sleepState == SLEEP_SLEEPING) {
     currentExpr = clawd::EXPR_SLEEPING;
     walkActive = false;
+    for (int i = 0; i < miniCount && i < MAX_MINIS; i++) {
+      miniCanvas[i].fillSprite(TFT_BLACK);
+      miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
+    }
     showStatus(currentExpr);
   }
 }
@@ -307,6 +323,7 @@ static void animTick(unsigned long now) {
     float breathPhase = (float)(now % 3000) / 3000.0f * 6.2831853f;
     int breathY = (int)(sinf(breathPhase) * BREATH_AMP * 0.5f);
     drawClawdToCanvas(currentExpr, 0, breathY);
+    pushCanvas(SPRITE_BASE_X);
 
     int zCount = (int)((now / 800) % 3) + 1;
     M5Cardputer.Display.setTextSize(2);
@@ -344,7 +361,8 @@ static void animTick(unsigned long now) {
     walkActive = true;
   }
 
-  drawClawdToCanvas(currentExpr, walkX, bobY + breathY);
+  drawClawdToCanvas(currentExpr, 0, bobY + breathY);
+  pushCanvas(SPRITE_BASE_X + walkX);
 
   if (permAskEndMs > 0) {
     if (now < permAskEndMs) {
@@ -383,6 +401,7 @@ static void partyTick(unsigned long now) {
     inReaction = false;
     walkActive = true;
     walkX = 0;
+    prevCanvasX = SPRITE_BASE_X;
     recordActivity();
     M5Cardputer.Display.fillScreen(TFT_BLACK);
     showStatus(clawd::EXPR_IDLE);
@@ -413,7 +432,7 @@ static void partyTick(unsigned long now) {
                     3, 3, TFT_WHITE);
   }
 
-  const int ox = WALK_RANGE + 1 + wildX;
+  const int ox = 1 + wildX;
   const int oy = BOB_PX + BREATH_AMP + 1 + wildY;
   const auto *shape = clawd::shapeFor(partyExpr);
   for (int r = 0; r < clawd::GRID_ROWS; r++) {
@@ -425,7 +444,8 @@ static void partyTick(unsigned long now) {
     }
   }
 
-  canvas.pushSprite(SPRITE_X, SPRITE_Y);
+  canvas.pushSprite(SPRITE_BASE_X, SPRITE_Y);
+  prevCanvasX = SPRITE_BASE_X;
 
   int remaining = (int)((partyEndMs - now) / 1000) + 1;
   M5Cardputer.Display.setTextSize(2);
