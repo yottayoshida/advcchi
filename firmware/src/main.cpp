@@ -470,6 +470,10 @@ static const EventDef EVENT_TABLE[] = {
     {"test_pass", clawd::EXPR_HAPPY,     1100, 800,  true},
     {"test_fail", clawd::EXPR_SURPRISED, 200,  1000, true},
     {"test_run",  clawd::EXPR_BLINK,     0,    400,  false},
+    {"tool_fail", clawd::EXPR_SLEEPY,    300,  800,  true},
+    {"stop",      clawd::EXPR_HAPPY,     900,  1200, true},
+    {"stop_fail", clawd::EXPR_SURPRISED, 200,  1000, true},
+    {"perm_ask",  clawd::EXPR_SURPRISED, 500,  600,  true},
 };
 
 static unsigned long lastEventMs = 0;

@@ -57,7 +57,8 @@ case "$event" in
   test_pass|test_fail|test_run|\
   bash|edit|read|glob|grep|write|test|search|commit|push|\
   party|skill|\
-  subagent_start|subagent_stop) ;;
+  subagent_start|subagent_stop|\
+  tool_fail|stop|stop_fail|perm_ask) ;;
   *) event="" ;;
 esac
 
