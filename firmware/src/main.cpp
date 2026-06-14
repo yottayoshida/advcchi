@@ -97,6 +97,9 @@ static MiniState minis[MAX_MINIS] = {};
 static unsigned long lastMiniEventMs = 0;
 static constexpr unsigned long MINI_TIMEOUT_MS = 5UL * 60 * 1000;
 
+// perm_ask "???" overlay (non-blocking, expression unchanged)
+static unsigned long permAskEndMs = 0;
+
 // fanfare sound (non-blocking, driven from loop)
 static int fanfarePhase = -1;
 static unsigned long fanfareNextMs = 0;
@@ -160,7 +163,8 @@ static void drawClawdToCanvas(clawd::Expression expr,
 
 static void showStatus(clawd::Expression expr) {
   static const char *labels[] = {
-      "idle", "blink", "happy", "surprised", "sleepy", "excited", "sleeping"};
+      "idle", "blink", "happy", "surprised", "sleepy", "excited", "sleeping",
+      "disappointed", "panicking", "confused"};
   static_assert(sizeof(labels) / sizeof(labels[0]) == clawd::EXPR_COUNT,
                 "labels[] must match Expression enum count");
   int ty = 135 - 14;
@@ -341,6 +345,20 @@ static void animTick(unsigned long now) {
   }
 
   drawClawdToCanvas(currentExpr, walkX, bobY + breathY);
+
+  if (permAskEndMs > 0) {
+    if (now < permAskEndMs) {
+      int qCount = (int)((now / 300) % 3) + 1;
+      M5Cardputer.Display.setTextSize(2);
+      M5Cardputer.Display.setTextColor(TFT_RED);
+      M5Cardputer.Display.setCursor(155, 28);
+      for (int i = 0; i < qCount; i++) M5Cardputer.Display.print("?");
+    } else {
+      permAskEndMs = 0;
+      walkActive = true;
+    }
+  }
+
   drawMiniClawds(now);
 }
 
@@ -470,10 +488,9 @@ static const EventDef EVENT_TABLE[] = {
     {"test_pass", clawd::EXPR_HAPPY,     1100, 800,  true},
     {"test_fail", clawd::EXPR_SURPRISED, 200,  1000, true},
     {"test_run",  clawd::EXPR_BLINK,     0,    400,  false},
-    {"tool_fail", clawd::EXPR_SLEEPY,    300,  800,  true},
-    {"stop",      clawd::EXPR_HAPPY,     900,  1200, true},
-    {"stop_fail", clawd::EXPR_SURPRISED, 200,  1000, true},
-    {"perm_ask",  clawd::EXPR_SURPRISED, 500,  600,  true},
+    {"tool_fail", clawd::EXPR_DISAPPOINTED, 250,  1000, true},
+    {"stop",      clawd::EXPR_SURPRISED,    900,  1200, true},
+    {"stop_fail", clawd::EXPR_PANICKING,    200,  1000, true},
 };
 
 static unsigned long lastEventMs = 0;
@@ -502,6 +519,15 @@ static void handleSerialEvent(const char *event) {
   }
   if (strcmp(event, "subagent_stop") == 0) {
     despawnMiniClawd();
+    return;
+  }
+
+  if (strcmp(event, "perm_ask") == 0) {
+    permAskEndMs = now + 3000;
+    walkActive = false;
+    walkX = 0;
+    if (!muted) M5Cardputer.Speaker.tone(500, 150);
+    Serial.printf("[clawd] event: %s\n", event);
     return;
   }
 

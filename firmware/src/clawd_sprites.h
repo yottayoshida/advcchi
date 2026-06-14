@@ -113,6 +113,48 @@ constexpr uint8_t SHAPE_SLEEPING[GRID_ROWS][GRID_COLS] = {
     {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
 };
 
+// DISAPPOINTED — droopy stalks, eyes shifted down, limp legs
+constexpr uint8_t SHAPE_DISAPPOINTED[GRID_ROWS][GRID_COLS] = {
+    {0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0},  // short droopy stalks
+    {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},  // eyes closed on top
+    {0,0,1,1,0,1,1,1,1,1,1,0,1,1,0,0},  // eyes only open at bottom
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0},  // legs droop inward
+    {0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0},
+};
+
+// PANICKING — asymmetric stalks, big eyes, legs splayed wide
+constexpr uint8_t SHAPE_PANICKING[GRID_ROWS][GRID_COLS] = {
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},  // stalks max width
+    {0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},  // left stalk slightly shorter
+    {0,0,1,1,0,0,1,1,1,1,0,0,1,1,0,0},  // big eyes (2-col holes)
+    {0,0,1,1,0,0,1,1,1,1,0,0,1,1,0,0},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1},  // legs max splay
+    {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1},
+};
+
+// CONFUSED — same shape as SURPRISED, with "???" overlay drawn in code
+constexpr uint8_t SHAPE_CONFUSED[GRID_ROWS][GRID_COLS] = {
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {0,0,1,1,0,0,1,1,1,1,0,0,1,1,0,0},
+    {0,0,1,1,0,0,1,1,1,1,0,0,1,1,0,0},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,0,1,0,1,0,0,0,0,1,0,1,0,0,0},
+    {0,0,0,1,0,1,0,0,0,0,1,0,1,0,0,0},
+};
+
 enum Expression : uint8_t {
   EXPR_IDLE = 0,
   EXPR_BLINK,
@@ -121,18 +163,24 @@ enum Expression : uint8_t {
   EXPR_SLEEPY,
   EXPR_EXCITED,
   EXPR_SLEEPING,
+  EXPR_DISAPPOINTED,
+  EXPR_PANICKING,
+  EXPR_CONFUSED,
   EXPR_COUNT,
 };
 
 inline const uint8_t (*shapeFor(Expression e))[GRID_COLS] {
   switch (e) {
-    case EXPR_BLINK:     return SHAPE_BLINK;
-    case EXPR_HAPPY:     return SHAPE_HAPPY;
-    case EXPR_SURPRISED: return SHAPE_SURPRISED;
-    case EXPR_SLEEPY:    return SHAPE_SLEEPY;
-    case EXPR_EXCITED:   return SHAPE_EXCITED;
-    case EXPR_SLEEPING:  return SHAPE_SLEEPING;
-    default:             return SHAPE_IDLE;
+    case EXPR_BLINK:        return SHAPE_BLINK;
+    case EXPR_HAPPY:        return SHAPE_HAPPY;
+    case EXPR_SURPRISED:    return SHAPE_SURPRISED;
+    case EXPR_SLEEPY:       return SHAPE_SLEEPY;
+    case EXPR_EXCITED:      return SHAPE_EXCITED;
+    case EXPR_SLEEPING:     return SHAPE_SLEEPING;
+    case EXPR_DISAPPOINTED: return SHAPE_DISAPPOINTED;
+    case EXPR_PANICKING:    return SHAPE_PANICKING;
+    case EXPR_CONFUSED:     return SHAPE_CONFUSED;
+    default:                return SHAPE_IDLE;
   }
 }
 
